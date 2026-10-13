@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Video Downloader</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="container">
+    <h1>🎬 Téléchargeur de Vidéos</h1>
+    <p class="subtitle">YouTube • TikTok • Instagram • Facebook • Twitter</p>
+
+    <div class="input-group">
+      <input id="url" type="text" placeholder="Collez le lien de la vidéo..." />
+      <button id="btnInfo">Analyser</button>
+    </div>
+
+    <div id="loading" class="hidden">⏳ Chargement...</div>
+    <div id="error" class="error hidden"></div>
+
+    <div id="result" class="result hidden">
+      <img id="thumb" alt="miniature" />
+      <h2 id="title"></h2>
+      <p id="meta"></p>
+
+      <div class="formats">
+        <button data-format="mp4">📹 MP4 (auto)</button>
+        <button data-format="720">🎥 MP4 720p</button>
+        <button data-format="1080">🎥 MP4 1080p</button>
+        <button data-format="mp3">🎵 MP3 (audio)</button>
+      </div>
+
+      <div id="downloadStatus" class="hidden"></div>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
