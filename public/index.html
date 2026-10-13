@@ -8,15 +8,15 @@
 </head>
 <body>
   <div class="container">
-    <h1>🎬 Téléchargeur de Vidéos</h1>
-    <p class="subtitle">YouTube • TikTok • Instagram • Facebook • Twitter</p>
+    <h1>Telechargeur de Videos</h1>
+    <p class="subtitle">YouTube - TikTok - Instagram - Facebook - Twitter</p>
 
     <div class="input-group">
-      <input id="url" type="text" placeholder="Collez le lien de la vidéo..." />
+      <input id="url" type="text" placeholder="Collez le lien de la video..." />
       <button id="btnInfo">Analyser</button>
     </div>
 
-    <div id="loading" class="hidden">⏳ Chargement...</div>
+    <div id="loading" class="hidden">Chargement...</div>
     <div id="error" class="error hidden"></div>
 
     <div id="result" class="result hidden">
@@ -25,10 +25,21 @@
       <p id="meta"></p>
 
       <div class="formats">
-        <button data-format="mp4">📹 MP4 (auto)</button>
-        <button data-format="720">🎥 MP4 720p</button>
-        <button data-format="1080">🎥 MP4 1080p</button>
-        <button data-format="mp3">🎵 MP3 (audio)</button>
+        <button data-format="mp4">MP4 (auto)</button>
+        <button data-format="720">MP4 720p</button>
+        <button data-format="1080">MP4 1080p</button>
+        <button data-format="mp3">MP3 (audio)</button>
+      </div>
+
+      <div id="progressBox" class="hidden">
+        <div class="progress-bar">
+          <div id="progressFill" class="progress-fill"></div>
+        </div>
+        <div class="progress-info">
+          <span id="progressPercent">0%</span>
+          <span id="progressSpeed"></span>
+          <span id="progressEta"></span>
+        </div>
       </div>
 
       <div id="downloadStatus" class="hidden"></div>

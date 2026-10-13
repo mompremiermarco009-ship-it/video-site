@@ -57,3 +57,26 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .downloading { background: rgba(124, 92, 255, 0.2); color: #b8a3ff; }
 .success { background: rgba(76, 217, 100, 0.2); color: #6ee27c; }
 .success a { color: #6ee27c; font-weight: bold; }
+.progress-bar {
+  width: 100%;
+  height: 12px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  overflow: hidden;
+  margin-top: 15px;
+}
+.progress-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #7c5cff, #b8a3ff);
+  border-radius: 6px;
+  transition: width 0.3s ease;
+}
+.progress-info {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 8px;
+  font-size: 0.85em;
+  color: #b8a3ff;
+}
+#progressPercent { font-weight: bold; }

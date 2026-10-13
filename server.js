@@ -3,7 +3,7 @@ const cors = require("cors");
 const { spawn } = require("child_process");
 const path = require("path");
 const fs = require("fs");
-const { v4: uuidv4 } = require("crypto").randomUUID ? { v4: () => require("crypto").randomUUID() } : { v4: () => Date.now().toString(36) + Math.random().toString(36).slice(2) };
+const crypto = require("crypto");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -16,7 +16,8 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 app.use("/downloads", express.static(DOWNLOAD_DIR));
 
-// Détection de plateforme
+const jobs = new Map();
+
 function detectPlatform(url) {
   if (/youtube\.com|youtu\.be/.test(url)) return "YouTube";
   if (/tiktok\.com/.test(url)) return "TikTok";
@@ -26,23 +27,45 @@ function detectPlatform(url) {
   return "Autre";
 }
 
-// Lancer yt-dlp
-function runYtDlp(args) {
+function runYtDlp(args, onProgress) {
   return new Promise((resolve, reject) => {
     const proc = spawn("yt-dlp", args);
     let stdout = "";
     let stderr = "";
-    proc.stdout.on("data", (d) => (stdout += d.toString()));
-    proc.stderr.on("data", (d) => (stderr += d.toString()));
+
+    proc.stdout.on("data", (d) => {
+      const s = d.toString();
+      stdout += s;
+      if (onProgress) parseProgress(s, onProgress);
+    });
+    proc.stderr.on("data", (d) => {
+      const s = d.toString();
+      stderr += s;
+      if (onProgress) parseProgress(s, onProgress);
+    });
     proc.on("close", (code) => {
       if (code === 0) resolve(stdout);
-      else reject(new Error(stderr || `yt-dlp exited with code ${code}`));
+      else reject(new Error(stderr || `yt-dlp exit code ${code}`));
     });
     proc.on("error", (err) => reject(err));
   });
 }
 
-// Route : infos vidéo
+function parseProgress(chunk, cb) {
+  const lines = chunk.split(/\r?\n/);
+  for (const line of lines) {
+    const m = line.match(/PROGRESS:([\d.]+)%\|([^|]*)\|([^|]*)\|([^|]*)/);
+    if (m) {
+      cb({
+        percent: parseFloat(m[1]),
+        speed: m[2].trim(),
+        eta: m[3].trim(),
+        size: m[4].trim(),
+      });
+    }
+  }
+}
+
 app.post("/api/info", async (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: "URL manquante" });
@@ -57,62 +80,109 @@ app.post("/api/info", async (req, res) => {
       duration: data.duration,
       thumbnail: data.thumbnail,
       uploader: data.uploader,
-      formats: (data.formats || [])
-        .filter((f) => f.ext === "mp4" || f.ext === "m4a")
-        .slice(-10)
-        .map((f) => ({
-          formatId: f.format_id,
-          ext: f.ext,
-          quality: f.format_note || f.resolution || "audio",
-          size: f.filesize || f.filesize_approx,
-        })),
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// Route : téléchargement
-app.post("/api/download", async (req, res) => {
+app.post("/api/download", (req, res) => {
   const { url, format } = req.body;
   if (!url) return res.status(400).json({ error: "URL manquante" });
 
-  const id = uuidv4();
-  const targetDir = path.join(DOWNLOAD_DIR, id);
+  const jobId = crypto.randomUUID();
+  const targetDir = path.join(DOWNLOAD_DIR, jobId);
   fs.mkdirSync(targetDir, { recursive: true });
 
   const outputTemplate = path.join(targetDir, "%(title)s.%(ext)s");
+  const progressTemplate =
+    "download:PROGRESS:%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s|%(progress._total_bytes_str)s";
 
   let args;
+  const common = ["--newline", "--no-warnings", "--progress-template", progressTemplate];
+
   if (format === "mp3") {
-    args = ["-x", "--audio-format", "mp3", "--audio-quality", "0", "-o", outputTemplate, url];
+    args = [...common, "-x", "--audio-format", "mp3", "--audio-quality", "0", "-o", outputTemplate, url];
   } else if (format === "720") {
-    args = ["-f", "bestvideo[height<=720]+bestaudio/best[height<=720]", "--merge-output-format", "mp4", "-o", outputTemplate, url];
+    args = [...common, "-f", "bestvideo[height<=720]+bestaudio/best[height<=720]", "--merge-output-format", "mp4", "-o", outputTemplate, url];
   } else if (format === "1080") {
-    args = ["-f", "bestvideo[height<=1080]+bestaudio/best[height<=1080]", "--merge-output-format", "mp4", "-o", outputTemplate, url];
+    args = [...common, "-f", "bestvideo[height<=1080]+bestaudio/best[height<=1080]", "--merge-output-format", "mp4", "-o", outputTemplate, url];
   } else {
-    args = ["-f", "best[ext=mp4]/best", "-o", outputTemplate, url];
+    args = [...common, "-f", "best[ext=mp4]/best", "-o", outputTemplate, url];
   }
 
-  try {
-    await runYtDlp(args);
-    const files = fs.readdirSync(targetDir);
-    if (files.length === 0) throw new Error("Aucun fichier téléchargé");
+  const job = {
+    id: jobId,
+    status: "running",
+    percent: 0,
+    speed: "",
+    eta: "",
+    size: "",
+    downloadUrl: null,
+    error: null,
+    clients: new Set(),
+  };
+  jobs.set(jobId, job);
 
-    const fileName = files[0];
-    res.json({
-      success: true,
-      fileName,
-      downloadUrl: `/downloads/${id}/${encodeURIComponent(fileName)}`,
-      platform: detectPlatform(url),
+  runYtDlp(args, (p) => {
+    job.percent = p.percent;
+    job.speed = p.speed;
+    job.eta = p.eta;
+    job.size = p.size;
+    broadcast(job, { type: "progress", ...p });
+  })
+    .then(() => {
+      const files = fs.readdirSync(targetDir);
+      if (files.length === 0) throw new Error("Aucun fichier téléchargé");
+      const fileName = files[0];
+      job.status = "done";
+      job.percent = 100;
+      job.downloadUrl = `/downloads/${jobId}/${encodeURIComponent(fileName)}`;
+      broadcast(job, { type: "done", downloadUrl: job.downloadUrl, fileName });
+      job.clients.forEach((r) => r.end());
+      job.clients.clear();
+    })
+    .catch((err) => {
+      fs.rmSync(targetDir, { recursive: true, force: true });
+      job.status = "error";
+      job.error = err.message;
+      broadcast(job, { type: "error", message: err.message });
+      job.clients.forEach((r) => r.end());
+      job.clients.clear();
     });
-  } catch (err) {
-    fs.rmSync(targetDir, { recursive: true, force: true });
-    res.status(500).json({ success: false, error: err.message });
-  }
+
+  res.json({ success: true, jobId });
 });
 
-// Nettoyage : supprime les fichiers > 1h
+function broadcast(job, data) {
+  const payload = `data: ${JSON.stringify(data)}\n\n`;
+  job.clients.forEach((r) => r.write(payload));
+}
+
+app.get("/api/progress/:jobId", (req, res) => {
+  const job = jobs.get(req.params.jobId);
+  if (!job) return res.status(404).end();
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  res.write(`data: ${JSON.stringify({ type: "progress", percent: job.percent, speed: job.speed, eta: job.eta, size: job.size })}\n\n`);
+
+  if (job.status === "done") {
+    res.write(`data: ${JSON.stringify({ type: "done", downloadUrl: job.downloadUrl })}\n\n`);
+    return res.end();
+  }
+  if (job.status === "error") {
+    res.write(`data: ${JSON.stringify({ type: "error", message: job.error })}\n\n`);
+    return res.end();
+  }
+
+  job.clients.add(res);
+  req.on("close", () => job.clients.delete(res));
+});
+
 setInterval(() => {
   const now = Date.now();
   if (!fs.existsSync(DOWNLOAD_DIR)) return;
@@ -121,10 +191,11 @@ setInterval(() => {
     const stats = fs.statSync(p);
     if (now - stats.mtimeMs > 3600000) {
       fs.rmSync(p, { recursive: true, force: true });
+      jobs.delete(entry);
     }
   });
 }, 600000);
 
 app.listen(PORT, () => {
-  console.log(`✅ Serveur démarré sur http://localhost:${PORT}`);
+  console.log(`Serveur demarre sur http://localhost:${PORT}`);
 });
